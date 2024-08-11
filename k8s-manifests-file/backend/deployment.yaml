@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: abdulsam1/newrepo:${BUILD_NUMBER}
+        image: abdulsam1/newrepo:25
         imagePullPolicy: Always
         env:
         - name: MONGO_CONN_STR
