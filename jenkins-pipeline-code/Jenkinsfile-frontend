@@ -1,61 +1,64 @@
-pipeline{
+pipeline {
     agent any
     tools {
-        jdk 'jdk'
         nodejs 'nodejs'
     }
-    environment  {
+    environment {
         SCANNER_HOME=tool 'sonar-scanner'
         DOCKER_HUB_CREDENTIALS = 'docker_hub'
-        DOCKER_HUB_REPO = 'abdulsami1/newrepo'
+        DOCKER_HUB_REPO = 'newrepo'
         IMAGE_TAG = 'latest'
-
     }
-    stages{
-        stage('cleaning workspace'){
-            steps{
+    stages {
+        stage('cleaning workspace') {
+            steps {
                 cleanWs()
             }
         }
-        stage('checkout from git'){
-            steps{
-                git credentialsId: 'github_token' ,url: 'https://github.com/Samiabbasi1/kubernetes-proj-devsecops.git'
+        stage('checkout from git') {
+            steps {
+                git credentialsId: 'github_token', url: 'https://github.com/Samiabbasi1/kubernetes-proj-devsecops.git', branch: 'main'
+    
             }
         }
-        stage('sonarqube analysis'){
-            steps{
-                dir('/appcode/frontend'){
-                    withSonarQubeEnv('sonar-server'){
+        stage('sonarqube analysis') {
+            steps {
+                dir('appcode/frontend') {
+                    withSonarQubeEnv('sonar-server') {
                         sh '''
-                            $SONAR_HOME/bin/sonar-scanner \
-                            -Dsonar.projectName=frontend \
-                            -Dsonar.projectKey=frontend
+                            $SCANNER_HOME/bin/sonar-scanner \
+                            -Dsonar.projectKey=frontend \
+                            -Dsonar.sources=. \
+                            -Dsonar.host.url=http://localhost:9000 \
+                            -Dsonar.login=squ_544b9b23459b88818b66f454c2c3146b4a904690
+
                         '''
                     }
                 }
             }
         }
-        stage('quality check'){
-            steps{
-                script{
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar_token' 
+        stage('quality check') {
+            steps {
+                script {
+                    def qualityGate = waitForQualityGate abortPipeline: false, credentialsId: 'sonar_token'
+                    if (qualityGate.status != 'OK') {
+                        error "SonarQube quality gate failed: ${qualityGate.status}"
+                    }
                 }
             }
         }
-        stage('owasp dependency check'){
-            steps{
-                dir('appcode/frontend'){
+        stage('owasp dependency check') {
+            steps {
+                dir('appcode/frontend') {
                     sh 'trivy fs . > trivyfs.txt'
                 }
             }
         }
-        stage('docker image build'){
-            steps{
-                script{
-                    dir('appcode/frontend'){
-                        sh 'docker system prune -f'
-                        sh 'docker container prune -f'
-                        sh 'docker build -t ${DOCKER_HUB_REPO}:${BUILD_NUMBER} .'
+        stage('docker image build') {
+            steps {
+                script {
+                    dir('appcode/frontend/src') {
+                        sh 'docker build -t abdulsami1/${DOCKER_HUB_REPO}:${BUILD_NUMBER} .'
                     }
                 }
             }
@@ -65,19 +68,14 @@ pipeline{
                 script {
                     withCredentials([usernamePassword(credentialsId: 'docker_hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-                        sh 'docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}'
+                        sh 'docker push abdulsami1/${DOCKER_HUB_REPO}:${BUILD_NUMBER}'
                     }
                 }
             }
         }
-        stage('trivy image scan'){
-            steps{
-                sh 'trivy image ${DOCKER_HUB_REPO}:${BUILD_NUMBER} > trivyimage.txt'
-            }
-        }
-        stage('Checkout Code') {
+        stage('trivy image scan') {
             steps {
-                git credentialsId: 'github_token', url: 'https://github.com/Samiabbasi1/kubernetes-proj-devsecops.git'
+                sh 'trivy image abdulsami1/newrepo:${BUILD_NUMBER} > trivyimage.txt'
             }
         }
         stage('Update Deployment file') {
@@ -86,16 +84,16 @@ pipeline{
                 GIT_USER_NAME = "Samiabbasi1"
             }
             steps {
-                dir('k8s-manifests-file/frontend'){
+                dir('k8s-manifests-file/frontend') {
                     withCredentials([string(credentialsId: 'github_token', variable: 'GITHUB_TOKEN')]) {
                         sh '''
                             git config user.email "abdulsamiabbasi1@gmail.com"
                             git config user.name "Samiabbasi1"
                             BUILD_NUMBER=${BUILD_NUMBER}
                             echo $BUILD_NUMBER
-                            imageTag=$(grep -oP '(?<=frontend:)[^ ]+' deployment.yaml)
+                            imageTag=$(grep -oP '(?<=image: abdulsami1/newrepo:)[^ ]+' deployment.yaml)
                             echo $imageTag
-                            sed -i "s/${DOCKER_HUB_REPO}:${imageTag}/${DOCKER_HUB_REPO}:${BUILD_NUMBER}/" deployment.yaml
+                            sed -i "s|abdulsami1/newrepo:${imageTag}|abdulsami1/newrepo:${BUILD_NUMBER}|g" deployment.yaml
                             git add deployment.yaml
                             git commit -m "Update deployment Image to version \${BUILD_NUMBER}"
                             git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
@@ -104,6 +102,5 @@ pipeline{
                 }
             }
         }
-
     }
 }
