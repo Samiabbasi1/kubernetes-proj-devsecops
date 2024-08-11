@@ -1,0 +1,113 @@
+pipeline {
+    agent any 
+    tools {
+        jdk 'jdk'
+        nodejs 'nodejs'
+    }
+    environment  {
+        SCANNER_HOME=tool 'sonar-scanner'
+        DOCKER_HUB_CREDENTIALS = 'docker_hub'
+        DOCKER_HUB_REPO = 'abdulsami1/newrepo'
+        IMAGE_TAG = 'latest'
+    }
+    stages {
+        stage('cleaning workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('checkout from git') {
+            steps {
+                git credentialsId: 'github_token', url: 'https://github.com/Samiabbasi1/kubernetes-proj-devsecops.git'
+            }
+        }
+        stage('sonarqube analysis') {
+            steps {
+                dir('appcode/backend') {
+                    withSonarQubeEnv('sonar-server') {
+                        sh ''' $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=backend \
+                        -Dsonar.projectKey=backend '''
+                    }
+                }
+            }
+        }
+        stage('quality check') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar_token' 
+                }
+            }
+        }
+        stage('OWASP dependency-check scan') {
+            steps {
+                dir('appcode/backend') {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'dp-check'
+                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                }
+            }
+        }
+        stage('trivy file scan') {
+            steps {
+                dir('appcode/backend') {
+                    sh 'trivy fs . > trivyfs.txt'
+                }
+            }
+        }
+        stage('docker image build'){
+            steps{
+                script{
+                    dir('appcode/frontend'){
+                        sh 'docker system prune -f'
+                        sh 'docker container prune -f'
+                        sh 'docker build -t ${DOCKER_HUB_REPO}:${BUILD_NUMBER} .'
+                    }
+                }
+            }
+        }
+        stage('image pushing to dockerhub') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'docker_hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                        sh 'docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}'
+                    }
+                }
+            }
+        }
+        stage('trivy image scan'){
+            steps{
+                sh 'trivy image ${DOCKER_HUB_REPO}:${BUILD_NUMBER} > trivyimage.txt'
+            }
+        }
+        stage('Checkout Code') {
+            steps {
+                git credentialsId: 'github_token', url: 'https://github.com/Samiabbasi1/kubernetes-proj-devsecops.git'
+            }
+        }
+        stage('Update Deployment file') {
+            environment {
+                GIT_REPO_NAME = "kubernetes-proj-devsecops"
+                GIT_USER_NAME = "Samiabbasi1"
+            }
+            steps {
+                dir('k8s-manifests-file/frontend'){
+                    withCredentials([string(credentialsId: 'github_token', variable: 'GITHUB_TOKEN')]) {
+                        sh '''
+                            git config user.email "abdulsamiabbasi1@gmail.com"
+                            git config user.name "Samiabbasi1"
+                            BUILD_NUMBER=${BUILD_NUMBER}
+                            echo $BUILD_NUMBER
+                            imageTag=$(grep -oP '(?<=frontend:)[^ ]+' deployment.yaml)
+                            echo $imageTag
+                            sed -i "s/${DOCKER_HUB_REPO}:${imageTag}/${DOCKER_HUB_REPO}:${BUILD_NUMBER}/" deployment.yaml
+                            git add deployment.yaml
+                            git commit -m "Update deployment Image to version \${BUILD_NUMBER}"
+                            git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
