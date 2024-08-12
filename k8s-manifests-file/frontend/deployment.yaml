@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: abdulsami1/newrepo:38
+        image: abdulsami1/newrepo:42
         imagePullPolicy: Always
         ports:
         - containerPort: 3000
