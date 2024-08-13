@@ -37,16 +37,16 @@ pipeline {
                 }
             }
         }
-        // stage('quality check') {
-        //     steps {
-        //         script {
-        //             def qualityGate = waitForQualityGate abortPipeline: false, credentialsId: 'sonar_token'
-        //             if (qualityGate.status != 'OK') {
-        //                 error "SonarQube quality gate failed: ${qualityGate.status}"
-        //             }
-        //         }
-        //     }
-        // }
+        stage('quality check') {
+            steps {
+                script {
+                    def qualityGate = waitForQualityGate abortPipeline: false, credentialsId: 'sonar_token'
+                    if (qualityGate.status != 'OK') {
+                        error "SonarQube quality gate failed: ${qualityGate.status}"
+                    }
+                }
+            }
+        }
         stage('owasp dependency check') {
             steps {
                 dir('appcode/frontend') {
